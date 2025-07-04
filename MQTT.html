@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>MQTT ↔ WSS 网关客户端</title>
+  <script src="./paho-mqtt-min.js"></script>
+  <style>
+    body { font-family: sans-serif; background: #f4f4f4; padding: 10px; }
+    textarea {
+      font-family: monospace;
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-width: 100%;
+      width: 100%;
+      box-sizing: border-box;
+      resize: vertical;
+    }
+    .block { border: 1px solid #ccc; background: #fff; padding: 10px; margin-top: 10px; }
+    .wss-title {
+      font-weight: bold;
+      margin-bottom: 6px;
+      word-break: break-all;
+    }
+    .theme-area {
+      font-size: 14px;
+      margin-bottom: 6px;
+      line-height: 1.5;
+    }
+    code {
+      background: #eee;
+      padding: 2px 4px;
+      border-radius: 4px;
+    }
+    .notice {
+      font-size: 15px;
+      background: #fff7e6;
+      padding: 10px;
+      border: 1px solid #ffd591;
+      margin-bottom: 15px;
+    }
+    h2 {
+        margin-top: 10px;
+        margin-bottom: 10px;
+    }
+  </style>
+</head>
+<body>
+  <h2>MQTT ↔ WSS 网关客户端</h2>
+
+  <div class="notice">
+    📡 <strong>接收 WSS 连接的 MQTT 主题：</strong> <code>client/ws_url/&lt;clientId&gt;</code><br>
+    <strong>发布格式示例：</strong><br>
+    <code>{ "url": "wss://example.com/socket?instance=yz082m-smzsbh4lguauy53m-o735cjzyaeasv4o6" }</code><br>
+    <hr>
+    🔌 <strong>主动关闭 WSS 连接的统一主题：</strong> <code>client/disconnect/&lt;clientId&gt;</code><br>
+    <strong>消息体示例：</strong><br>
+    <code>{ "url": "smzsbh4lguauy53m-o735cjzyaeasv4o6" }</code><br>
+    发送到该主题后，客户端会查找对应连接并关闭。
+  </div>
+
+  <div class="block">
+    <div><strong>🆔 当前客户端 ID：</strong> <code id="clientIdDisplay">加载中...</code></div>
+  </div>
+
+  <div class="block">
+    <div><strong>📜 MQTT 消息日志</strong></div>
+    <textarea id="mqttLog" rows="10" readonly></textarea><br>
+    <button onclick="document.getElementById('mqttLog').value = ''">🪑 清空日志</button>
+  </div>
+
+  <div>
+    <label>发布主题：</label>
+    <input type="text" id="pubTopic" value="client/ws_url/<clientId>" size="40"><br><br>
+    <label>发布内容：</label><br>
+    <textarea id="pubMsg" rows="3">{ "url": "wss://example.com/socket?instance=yz082m-smzsbh4lguauy53m-o735cjzyaeasv4o6" }</textarea><br>
+    <button id="sendMqtt">发布到 MQTT</button>
+  </div>
+
+  <hr>
+  <h3>连接数: <span id="connectionCount">0</span></h3>
+  <div id="logContainer"></div>
+
+  <script>
+    const logContainer = document.getElementById('logContainer');
+    const connectionCountElem = document.getElementById('connectionCount');
+    const mqttLog = document.getElementById('mqttLog');
+    let clientId = null;
+    const wsMap = {};
+    let mqttClient = null;
+    const reconnectInterval = 3000;
+
+    async function fetchClientIdUntilSuccess() {
+      const url = 'http://127.0.0.1:3000/api/getClientId';
+
+      return new Promise((resolve) => {
+        const tryFetch = async () => {
+          try {
+            const res = await fetch(url);
+            if (res.ok) {
+              const data = await res.json();
+              if (data.clientId) {
+                logMqtt(`✅ 成功获取 clientId: ${data.clientId}`);
+                return resolve(data.clientId);
+              } else {
+                throw new Error("返回中无 clientId 字段");
+              }
+            } else {
+              throw new Error(`HTTP 状态码: ${res.status}`);
+            }
+          } catch (e) {
+            const errMsg = `❌ 获取 clientId 失败，3秒后重试: ${e.message}`;
+            console.warn(errMsg);
+            logMqtt(errMsg);
+            setTimeout(tryFetch, 3000);
+          }
+        };
+
+        tryFetch();
+      });
+    }
+
+    function updateConnectionCount() {
+      connectionCountElem.innerText = Object.keys(wsMap).length;
+    }
+
+    function logTo(wssUrl, msg) {
+      const entry = wsMap[wssUrl];
+      if (entry) {
+        entry.textarea.value += msg + "\n";
+        entry.textarea.scrollTop = entry.textarea.scrollHeight;
+      }
+    }
+
+    function logMqtt(msg) {
+      mqttLog.value += msg + "\n";
+      mqttLog.scrollTop = mqttLog.scrollHeight;
+    }
+
+    function getMqttTopicFromWssUrl(url) {
+      try {
+        const instance = new URL(url).searchParams.get("instance");
+        return instance?.split("-").slice(1).join("-") || null;
+      } catch {
+        return null;
+      }
+    }
+
+    function createWssLogBlock(wssUrl, mqttTopic, sendTopic, closeTopic) {
+      const wrapper = document.createElement('div');
+      wrapper.className = "block";
+
+      const title = document.createElement('div');
+      title.className = "wss-title";
+      title.innerText = `🔗 WSS连接: ${wssUrl}`;
+
+      const themeInfo = document.createElement('div');
+      themeInfo.className = "theme-area";
+      themeInfo.innerHTML = `
+        <strong>📛 MQTT 主题：</strong><br>
+        ✅ 接收主题: <code>${mqttTopic}</code><br>
+        📤 发送主题: <code>${sendTopic}</code><br>
+        ❌ 状态上报: <code>${closeTopic}</code>
+      `;
+
+      const textarea = document.createElement('textarea');
+      textarea.rows = 10;
+      textarea.readOnly = true;
+
+      wrapper.appendChild(title);
+      wrapper.appendChild(themeInfo);
+      wrapper.appendChild(textarea);
+      logContainer.appendChild(wrapper);
+
+      return { wrapper, textarea };
+    }
+
+    function connectWSS(wssUrl) {
+      if (wsMap[wssUrl]) return logTo(wssUrl, "⚠️ 已连接，无需重复连接");
+
+      const mqttTopic = getMqttTopicFromWssUrl(wssUrl) || "client/ws_data";
+      const sendTopic = mqttTopic + "/send";
+      const closeTopic = mqttTopic + "/ws_close";
+      const ws = new WebSocket(wssUrl);
+      const { wrapper, textarea } = createWssLogBlock(wssUrl, mqttTopic, sendTopic, closeTopic);
+      wsMap[wssUrl] = { ws, textarea, wrapper, mqttTopic, sendTopic, closeTopic };
+      logTo(wssUrl, "⏳ 正在连接...");
+
+      ws.onopen = () => {
+        logTo(wssUrl, "✅ WebSocket 已连接");
+        mqttClient?.subscribe(sendTopic);
+        logTo(wssUrl, `✅ 已订阅发送主题: ${sendTopic}`);
+        updateConnectionCount();
+      };
+
+      ws.onmessage = e => {
+        logTo(wssUrl, "📥 收到: " + e.data);
+        const msg = new Paho.Message(e.data);
+        msg.destinationName = mqttTopic;
+        mqttClient.send(msg);
+      };
+
+      ws.onerror = e => logTo(wssUrl, "❌ WebSocket 错误");
+
+      ws.onclose = e => {
+        logTo(wssUrl, "🔒 WebSocket 连接关闭");
+        const payload = JSON.stringify({ url: wssUrl, status: "closed", reason: e.reason || "closed" });
+        const msg = new Paho.Message(payload);
+        msg.destinationName = closeTopic;
+        mqttClient.send(msg);
+        logMqtt(`📤 [${closeTopic}] ${payload}`);
+        logContainer.removeChild(wsMap[wssUrl].wrapper);
+        delete wsMap[wssUrl];
+        updateConnectionCount();
+      };
+    }
+
+    function connectMQTT() {
+      mqttClient = new Paho.Client("127.0.0.1", 8882, clientId);
+
+      mqttClient.onConnectionLost = function (res) {
+        logMqtt("⚠️ MQTT 连接丢失，准备重连...");
+        setTimeout(connectMQTT, reconnectInterval);
+      };
+
+      mqttClient.onMessageArrived = function (msg) {
+        const topic = msg.destinationName;
+        const payload = msg.payloadString;
+
+        let isForwarded = Object.values(wsMap).some(w => topic === w.mqttTopic);
+        if (!isForwarded) logMqtt(`📥 [${topic}] ${payload}`);
+
+        if (topic === `client/ws_url/${clientId}`) {
+          try {
+            const json = JSON.parse(payload);
+            if (json.url?.startsWith("ws")) connectWSS(json.url);
+          } catch {}
+        }
+
+        if (topic === `client/disconnect/${clientId}`) {
+          try {
+            const json = JSON.parse(payload);
+            const target = Object.entries(wsMap).find(([k, v]) => v.mqttTopic === json.url);
+            if (target) {
+              logTo(target[0], "🛑 收到断开指令，正在关闭连接...");
+              target[1].ws.close(1000, "主动断开");
+            }
+          } catch {}
+        }
+
+        for (const wssUrl in wsMap) {
+          const { ws, sendTopic } = wsMap[wssUrl];
+          if (topic === sendTopic && ws.readyState === WebSocket.OPEN) {
+            ws.send(payload);
+            logTo(wssUrl, `📤 从 MQTT 发送到 WSS: ${payload}`);
+          }
+        }
+      };
+
+      mqttClient.connect({
+        userName: "MQTT@@##admin",
+        password: "MQTT@@##admin",
+        useSSL: false,
+        onSuccess: () => {
+          logMqtt("✅ MQTT 已连接");
+          mqttClient.subscribe(`client/ws_url/${clientId}`);
+          mqttClient.subscribe(`client/disconnect/${clientId}`);
+        },
+        onFailure: e => {
+          logMqtt("❌ MQTT 连接失败: " + e.errorMessage);
+          setTimeout(connectMQTT, reconnectInterval);
+        }
+      });
+    }
+
+    async function init() {
+      clientId = await fetchClientIdUntilSuccess();
+      document.getElementById("clientIdDisplay").innerText = clientId;
+      connectMQTT();
+    }
+
+    document.getElementById("sendMqtt").onclick = function () {
+      const topic = document.getElementById("pubTopic").value.trim();// + "/" + clientId;
+      const msg = document.getElementById("pubMsg").value;
+      if (!mqttClient?.isConnected()) return alert("MQTT 未连接");
+      try {
+        const message = new Paho.Message(msg);
+        message.destinationName = topic;
+        mqttClient.send(message);
+        logMqtt(`📤 [${topic}] ${msg}`);
+        //alert("📤 发布成功: " + topic);
+      } catch (e) {
+        //alert("❌ 发布失败: " + e.message);
+      }
+    };
+
+    init();
+  </script>
+</body>
+</html>
