@@ -50,11 +50,11 @@
   <div class="notice">
     📡 <strong>接收 WSS 连接的 MQTT 主题：</strong> <code>client/ws_url/&lt;clientId&gt;</code><br>
     <strong>发布格式示例：</strong><br>
-    <code>{ "url": "wss://example.com/socket?instance=yz082m-smzsbh4lguauy53m-o735cjzyaeasv4o6" }</code><br>
+    <code>{"url":"wss://example.com/socket?instance=yz082m-smzsbh4lguauy53m-o735cjzyaeasv4o6"}</code><br>
     <hr>
     🔌 <strong>主动关闭 WSS 连接的统一主题：</strong> <code>client/disconnect/&lt;clientId&gt;</code><br>
     <strong>消息体示例：</strong><br>
-    <code>{ "url": "smzsbh4lguauy53m-o735cjzyaeasv4o6" }</code><br>
+    <code>{"url":"smzsbh4lguauy53m-o735cjzyaeasv4o6"}</code><br>
     发送到该主题后，客户端会查找对应连接并关闭。
   </div>
 
@@ -72,7 +72,7 @@
     <label>发布主题：</label>
     <input type="text" id="pubTopic" value="client/ws_url/<clientId>" size="40"><br><br>
     <label>发布内容：</label><br>
-    <textarea id="pubMsg" rows="3">{ "url": "wss://example.com/socket?instance=yz082m-smzsbh4lguauy53m-o735cjzyaeasv4o6" }</textarea><br>
+    <textarea id="pubMsg" rows="3">{"url":"wss://example.com/socket?instance=yz082m-smzsbh4lguauy53m-o735cjzyaeasv4o6"}</textarea><br>
     <button id="sendMqtt">发布到 MQTT</button>
   </div>
 
@@ -275,6 +275,7 @@
     async function init() {
       clientId = await fetchClientIdUntilSuccess();
       document.getElementById("clientIdDisplay").innerText = clientId;
+      document.getElementById("pubTopic").value = `client/ws_url/${clientId}`;
       connectMQTT();
     }
 
