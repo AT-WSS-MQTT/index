@@ -158,7 +158,7 @@
       themeInfo.innerHTML = `
         <strong>📛 MQTT 主题：</strong><br>
         ✅ 接收主题: <code>${mqttTopic}</code><br>
-        📤 发送主题: <code>${sendTopic}</code><br>
+        ⬆️ 发送主题: <code>${sendTopic}</code><br>
         ❌ 状态上报: <code>${closeTopic}</code>
       `;
 
@@ -193,7 +193,7 @@
       };
 
       ws.onmessage = e => {
-        logTo(wssUrl, "📥 收到: " + e.data);
+        logTo(wssUrl, "⬇️ 收到: " + e.data);
         const msg = new Paho.Message(e.data);
         msg.destinationName = mqttTopic;
         mqttClient.send(msg);
@@ -207,7 +207,7 @@
         const msg = new Paho.Message(payload);
         msg.destinationName = closeTopic;
         mqttClient.send(msg);
-        logMqtt(`📤 [${closeTopic}] ${payload}`);
+        logMqtt(`⬆️ wss连接关闭 [${closeTopic}] ${payload}`);
         logContainer.removeChild(wsMap[wssUrl].wrapper);
         delete wsMap[wssUrl];
         updateConnectionCount();
@@ -227,7 +227,7 @@
         const payload = msg.payloadString;
 
         let isForwarded = Object.values(wsMap).some(w => topic === w.mqttTopic);
-        if (!isForwarded) logMqtt(`📥 [${topic}] ${payload}`);
+        if (!isForwarded) logMqtt(`⬇️ 接收主题: [${topic}] ${payload}`);
 
         if (topic === `client/ws_url/${clientId}`) {
           try {
@@ -251,7 +251,7 @@
           const { ws, sendTopic } = wsMap[wssUrl];
           if (topic === sendTopic && ws.readyState === WebSocket.OPEN) {
             ws.send(payload);
-            logTo(wssUrl, `📤 从 MQTT 发送到 WSS: ${payload}`);
+            logTo(wssUrl, `⬆️ 从 MQTT 发送到 WSS: ${payload}`);
           }
         }
       };
@@ -287,8 +287,8 @@
         const message = new Paho.Message(msg);
         message.destinationName = topic;
         mqttClient.send(message);
-        logMqtt(`📤 [${topic}] ${msg}`);
-        //alert("📤 发布成功: " + topic);
+        logMqtt(`⬆️ 发布主题: [${topic}] ${msg}`);
+        //alert("⬆️ 发布成功: " + topic);
       } catch (e) {
         //alert("❌ 发布失败: " + e.message);
       }
