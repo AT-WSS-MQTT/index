@@ -1,0 +1,754 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>百家乐EV追踪器 - MQTT实时数据</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+        body {
+            background: linear-gradient(135deg, #1a472a 0%, #0e2a1a 100%);
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            padding: 12px;
+            min-height: 100vh;
+        }
+        .container {
+            max-width: 100%;
+            margin: 0 auto;
+        }
+        .header {
+            background: #2c2c2c;
+            border-radius: 16px;
+            padding: 10px 16px;
+            margin-bottom: 12px;
+            color: #f7e6c4;
+        }
+        .header h2 {
+            margin: 0 0 4px 0;
+            font-size: 1.3rem;
+        }
+        .header p {
+            margin: 0;
+            font-size: 12px;
+            opacity: 0.8;
+        }
+        .table-wrapper {
+            background: rgba(255, 248, 225, 0.95);
+            border-radius: 16px;
+            overflow-x: auto;
+            padding: 12px;
+        }
+        .card-table {
+            min-width: 1800px;
+            width: 100%;
+            border-collapse: collapse;
+            background: white;
+            border-radius: 12px;
+            overflow: hidden;
+            font-size: 12px;
+        }
+        .card-table th {
+            background: #2b4b2a;
+            color: #fff3e0;
+            padding: 8px 4px;
+            text-align: center;
+            font-weight: bold;
+            border-right: 1px solid #3e6a3c;
+            position: sticky;
+            top: 0;
+            font-size: 11px;
+        }
+        .card-table td {
+            padding: 6px 4px;
+            text-align: center;
+            border-bottom: 1px solid #eee;
+            border-right: 1px solid #f0e4d0;
+        }
+        .card-table tr:hover td {
+            background: #fff7ef;
+        }
+        .id-cell {
+            font-weight: bold;
+            background: #f5f0e0;
+            position: sticky;
+            left: 0;
+            font-size: 12px;
+        }
+        .ev-positive-bg {
+            background-color: #e8f5e9 !important;
+        }
+        .ev-negative-bg {
+            background-color: #ffebee !important;
+        }
+        .ev-neutral-bg {
+            background-color: #ffffff !important;
+        }
+        .empty-row td {
+            text-align: center;
+            padding: 40px;
+            color: #999;
+        }
+        .footer-note {
+            margin-top: 12px;
+            text-align: center;
+            font-size: 11px;
+            color: #ccc;
+        }
+        .top-bar {
+            background: #2c2c2c;
+            border-radius: 16px;
+            padding: 8px 16px;
+            margin-bottom: 12px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        .mqtt-status {
+            background: #1a1a1a;
+            padding: 5px 16px;
+            border-radius: 30px;
+            font-size: 12px;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .data-count {
+            background: #1a1a1a;
+            padding: 5px 16px;
+            border-radius: 30px;
+            font-size: 12px;
+            color: #d4af37;
+        }
+        .reconnect-btn {
+            background: #d4af37;
+            color: #1a1a1a;
+            border: none;
+            padding: 5px 16px;
+            border-radius: 30px;
+            cursor: pointer;
+            font-weight: bold;
+            font-size: 12px;
+        }
+        .reconnect-btn:hover {
+            background: #c4a030;
+        }
+        .status-connected {
+            color: #2b7329;
+        }
+        .status-disconnected {
+            color: #d9534f;
+        }
+        .status-failed {
+            color: #d9534f;
+        }
+        .status-connecting {
+            color: #d4af37;
+        }
+        .left-group {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+        .total-cell {
+            background: #f0e8d8;
+            font-weight: bold;
+        }
+        .remain-low {
+            color: #d9534f;
+            font-weight: bold;
+        }
+        .hand-cards {
+            font-size: 11px;
+            max-width: 150px;
+            word-break: break-word;
+            white-space: normal;
+        }
+        .update-time {
+            font-size: 11px;
+            white-space: nowrap;
+        }
+        .flash-active {
+            background-color: #ffaa00 !important;
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <div class="header">
+        <h2>🃟 百家乐EV追踪器</h2>
+        <p>8副牌 | 实时接收MQTT数据 | 主题: SA_Gaming_EV | 点数: 0-9 | 变化单元格闪烁橙色5次 | 自动重连</p>
+    </div>
+
+    <div class="top-bar">
+        <div class="left-group">
+            <div class="mqtt-status" id="mqttStatus">
+                <span>🔌</span>
+                <span id="statusText">正在连接...</span>
+            </div>
+            <div class="data-count" id="dataCount">📊 已加载 0 条数据 | 最后刷新: --:--:--</div>
+        </div>
+        <button class="reconnect-btn" id="reconnectBtn">🔄 重连</button>
+    </div>
+
+    <div class="table-wrapper">
+        <table class="card-table" id="cardTable">
+            <thead id="tableHeader"></thead>
+            <tbody id="tableBody">
+                <tr class="empty-row"><td colspan="50">暂无数据，等待MQTT消息......</td></tr>
+            </tbody>
+        </table>
+    </div>
+    <div class="footer-note">
+        ※ EV正数浅绿背景，EV负数浅红背景 | 数值变化时单元格背景会闪烁橙色5次 | 已出/剩余 = 总已出 / 剩余牌数（8副牌共416张）
+    </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/5.0.0/mqtt.min.js"></script>
+<script>
+    const MQTT_HOST = "ws://127.0.0.1:8882/mqtt";
+    const MQTT_TOPIC = "SA_Gaming_EV";
+    const MQTT_USERNAME = "MQTT@@##admin";
+    const MQTT_PASSWORD = "MQTT@@##admin";
+
+    const ALL_RANKS = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'];
+    const TOTAL_CARDS = 416;
+
+    const EV_FIELDS = [
+        'BankerEV', 'PlayerEV', 'PBonusEV_Player', 'PBonusEV_Banker',
+        'LuckySix12_20EV', 'LuckySix15EV', 'BigTigEV', 'SmallTigEV',
+        'SmallBuffEV', 'BigBuffEV', 'SmallDragonEV', 'BigDragonEV'
+    ];
+
+    const EV_LABELS = {
+        'BankerEV': '庄EV', 'PlayerEV': '闲EV',
+        'PBonusEV_Player': '闲龙宝EV', 'PBonusEV_Banker': '庄龙宝EV',
+        'LuckySix12_20EV': '幸运六12/20EV', 'LuckySix15EV': '幸运六15EV',
+        'BigTigEV': '大虎EV', 'SmallTigEV': '小虎EV',
+        'SmallBuffEV': '小水牛EV', 'BigBuffEV': '大水牛EV',
+        'SmallDragonEV': '小龙EV', 'BigDragonEV': '大龙EV'
+    };
+
+    let dataStore = {};
+    let mqttClient = null;
+    let previousDataStore = {};
+    let reconnectTimer = null;
+    let reconnectAttempts = 0;
+    let wasConnected = false;
+    const MAX_RECONNECT_ATTEMPTS = 10;
+    const BASE_RECONNECT_DELAY = 3000;
+
+    // 获取当前时间，格式: YYYY-MM-DD HH:MM:SS
+    function getCurrentDateTime() {
+        const now = new Date();
+        const year = now.getFullYear();
+        const month = String(now.getMonth() + 1).padStart(2, '0');
+        const day = String(now.getDate()).padStart(2, '0');
+        const hours = String(now.getHours()).padStart(2, '0');
+        const minutes = String(now.getMinutes()).padStart(2, '0');
+        const seconds = String(now.getSeconds()).padStart(2, '0');
+        return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+    }
+
+    function formatEV(value) {
+        if (value === undefined || value === null) return '--';
+        const num = parseFloat(value);
+        if (isNaN(num)) return '--';
+        return num.toFixed(2) + '%';
+    }
+
+    function formatHandCards(cards) {
+        if (!cards || cards.length === 0) return '--';
+        if (Array.isArray(cards)) {
+            return cards.join(', ');
+        }
+        return String(cards);
+    }
+
+    function getEVBackgroundClass(value) {
+        if (value === undefined || value === null) return 'ev-neutral-bg';
+        const num = parseFloat(value);
+        if (isNaN(num)) return 'ev-neutral-bg';
+        if (num > 0) return 'ev-positive-bg';
+        if (num < 0) return 'ev-negative-bg';
+        return 'ev-neutral-bg';
+    }
+
+    function updateDataCount() {
+        const count = Object.keys(dataStore).length;
+        const now = getCurrentDateTime();
+        document.getElementById('dataCount').innerHTML = `📊 已加载 ${count} 条数据 | 最后刷新: ${now}`;
+    }
+
+    function flashElement(element) {
+        if (!element) return;
+        
+        let flashCount = 0;
+        const maxFlashes = 10;
+        
+        function doFlash() {
+            if (!element || flashCount >= maxFlashes) {
+                if (element) element.classList.remove('flash-active');
+                return;
+            }
+            
+            if (flashCount % 2 === 0) {
+                element.classList.add('flash-active');
+            } else {
+                element.classList.remove('flash-active');
+            }
+            
+            flashCount++;
+            setTimeout(doFlash, 150);
+        }
+        
+        doFlash();
+    }
+
+    function renderHeader() {
+        const thead = document.getElementById('tableHeader');
+        let html = '<tr>';
+        html += '<th rowspan="2" style="min-width: 80px;">ID</th>';
+        html += '<th colspan="10" style="background: #3a6a38;">牌面分布 (已出张数)</th>';
+        html += '<th rowspan="2" style="background: #5a6a48;">闲家手牌</th>';
+        html += '<th rowspan="2" style="background: #5a6a48;">庄家手牌</th>';
+        html += '<th rowspan="2" style="background: #5a6a48;">已出/剩余</th>';
+        html += '<th rowspan="2" style="background: #5a6a48;">最后更新</th>';
+        html += '<th colspan="' + EV_FIELDS.length + '" style="background: #6a4a28;">EV期望值</th>';
+        html += '</tr><tr>';
+        for (let rank of ALL_RANKS) {
+            html += `<th>${rank}</th>`;
+        }
+        for (let field of EV_FIELDS) {
+            html += `<th>${EV_LABELS[field] || field}</th>`;
+        }
+        html += '</tr>';
+        thead.innerHTML = html;
+    }
+
+    function flashAllCellsForId(id) {
+        for (let rank of ALL_RANKS) {
+            const cell = document.querySelector(`.card-cell[data-id="${escapeHtml(id)}"][data-rank="${rank}"]`);
+            if (cell) flashElement(cell);
+        }
+        const playerCardsCell = document.querySelector(`.player-cards[data-id="${escapeHtml(id)}"]`);
+        if (playerCardsCell) flashElement(playerCardsCell);
+        const bankerCardsCell = document.querySelector(`.banker-cards[data-id="${escapeHtml(id)}"]`);
+        if (bankerCardsCell) flashElement(bankerCardsCell);
+        const totalCell = document.querySelector(`.total-cell[data-id="${escapeHtml(id)}"]`);
+        if (totalCell) flashElement(totalCell);
+        const updateTimeCell = document.querySelector(`.update-time-cell[data-id="${escapeHtml(id)}"]`);
+        if (updateTimeCell) flashElement(updateTimeCell);
+        for (let field of EV_FIELDS) {
+            const cell = document.querySelector(`.ev-cell[data-id="${escapeHtml(id)}"][data-field="${field}"]`);
+            if (cell) flashElement(cell);
+        }
+    }
+
+    function updateDataIncremental(newData) {
+        const oldData = JSON.parse(JSON.stringify(previousDataStore));
+        const allIds = new Set([...Object.keys(oldData), ...Object.keys(newData)]);
+        
+        for (let id of allIds) {
+            const oldItem = oldData[id];
+            const newItem = newData[id];
+            
+            if (!oldItem && newItem) {
+                dataStore = JSON.parse(JSON.stringify(newData));
+                previousDataStore = JSON.parse(JSON.stringify(newData));
+                renderFullTable();
+                setTimeout(() => {
+                    flashAllCellsForId(id);
+                }, 50);
+                continue;
+            }
+            
+            if (oldItem && !newItem) {
+                dataStore = JSON.parse(JSON.stringify(newData));
+                previousDataStore = JSON.parse(JSON.stringify(newData));
+                renderFullTable();
+                continue;
+            }
+            
+            if (!oldItem || !newItem) continue;
+            
+            const oldCards = oldItem.cards || {};
+            const newCards = newItem.cards || {};
+            const oldEv = oldItem.ev || {};
+            const newEv = newItem.ev || {};
+            
+            let cardChanged = false;
+            let dataChanged = false;
+            
+            for (let rank of ALL_RANKS) {
+                const oldVal = oldCards[rank] || 0;
+                const newVal = newCards[rank] || 0;
+                
+                if (oldVal !== newVal) {
+                    const cell = document.querySelector(`.card-cell[data-id="${escapeHtml(id)}"][data-rank="${rank}"]`);
+                    if (cell) {
+                        cell.textContent = newVal;
+                        flashElement(cell);
+                        cardChanged = true;
+                        dataChanged = true;
+                    }
+                }
+            }
+            
+            const oldPlayerCards = oldItem.player_cards || [];
+            const newPlayerCards = newItem.player_cards || [];
+            const playerCardsStr = formatHandCards(newPlayerCards);
+            const playerCardsCell = document.querySelector(`.player-cards[data-id="${escapeHtml(id)}"]`);
+            if (playerCardsCell && playerCardsCell.textContent !== playerCardsStr) {
+                playerCardsCell.textContent = playerCardsStr;
+                flashElement(playerCardsCell);
+                cardChanged = true;
+                dataChanged = true;
+            }
+            
+            const oldBankerCards = oldItem.banker_cards || [];
+            const newBankerCards = newItem.banker_cards || [];
+            const bankerCardsStr = formatHandCards(newBankerCards);
+            const bankerCardsCell = document.querySelector(`.banker-cards[data-id="${escapeHtml(id)}"]`);
+            if (bankerCardsCell && bankerCardsCell.textContent !== bankerCardsStr) {
+                bankerCardsCell.textContent = bankerCardsStr;
+                flashElement(bankerCardsCell);
+                cardChanged = true;
+                dataChanged = true;
+            }
+            
+            let totalDrawn = 0;
+            for (let rank of ALL_RANKS) {
+                totalDrawn += (newCards[rank] || 0);
+            }
+            const totalRemain = TOTAL_CARDS - totalDrawn;
+            const remainClass = totalRemain <= 20 ? 'remain-low' : '';
+            
+            const totalCell = document.querySelector(`.total-cell[data-id="${escapeHtml(id)}"]`);
+            if (totalCell) {
+                const newTotalHtml = `${totalDrawn} / <span class="${remainClass}">${totalRemain}</span>`;
+                if (totalCell.innerHTML !== newTotalHtml) {
+                    totalCell.innerHTML = newTotalHtml;
+                    if (cardChanged) flashElement(totalCell);
+                    dataChanged = true;
+                }
+            }
+            
+            // 更新最后更新时间
+            if (dataChanged) {
+                const updateTimeCell = document.querySelector(`.update-time-cell[data-id="${escapeHtml(id)}"]`);
+                if (updateTimeCell) {
+                    const timeStr = getCurrentDateTime();
+                    updateTimeCell.textContent = timeStr;
+                    flashElement(updateTimeCell);
+                }
+            }
+            
+            for (let field of EV_FIELDS) {
+                const oldVal = oldEv[field];
+                const newVal = newEv[field];
+                
+                if (oldVal !== newVal) {
+                    const cell = document.querySelector(`.ev-cell[data-id="${escapeHtml(id)}"][data-field="${field}"]`);
+                    if (cell) {
+                        cell.textContent = formatEV(newVal);
+                        const bgClass = getEVBackgroundClass(newVal);
+                        cell.className = `ev-cell ${bgClass}`;
+                        flashElement(cell);
+                        dataChanged = true;
+                    }
+                }
+            }
+        }
+        
+        dataStore = JSON.parse(JSON.stringify(newData));
+        previousDataStore = JSON.parse(JSON.stringify(newData));
+        updateDataCount();
+    }
+
+    function renderFullTable() {
+        const tbody = document.getElementById('tableBody');
+        const ids = Object.keys(dataStore);
+        
+        if (ids.length === 0) {
+            tbody.innerHTML = '<tr class="empty-row"><td colspan="50">暂无数据，等待MQTT消息...</td></tr>';
+            updateDataCount();
+            return;
+        }
+        
+        let html = '';
+        for (let id of ids) {
+            const item = dataStore[id];
+            const cardData = item?.cards || {};
+            const evData = item?.ev || {};
+            const playerCards = item?.player_cards || [];
+            const bankerCards = item?.banker_cards || [];
+            const lastUpdate = item?.last_update || '--';
+            
+            let totalDrawn = 0;
+            for (let rank of ALL_RANKS) {
+                totalDrawn += (cardData[rank] || 0);
+            }
+            const totalRemain = TOTAL_CARDS - totalDrawn;
+            const remainClass = totalRemain <= 20 ? 'remain-low' : '';
+            
+            html += '<tr>';
+            html += `<td class="id-cell">${escapeHtml(id)}</td>`;
+            
+            for (let rank of ALL_RANKS) {
+                const drawn = cardData[rank] || 0;
+                html += `<td class="card-cell" data-id="${escapeHtml(id)}" data-rank="${rank}">${drawn}</td>`;
+            }
+            
+            html += `<td class="player-cards hand-cards" data-id="${escapeHtml(id)}">${formatHandCards(playerCards)}</td>`;
+            html += `<td class="banker-cards hand-cards" data-id="${escapeHtml(id)}">${formatHandCards(bankerCards)}</td>`;
+            
+            html += `<td class="total-cell" data-id="${escapeHtml(id)}">${totalDrawn} / <span class="${remainClass}">${totalRemain}</span></td>`;
+            html += `<td class="update-time-cell update-time" data-id="${escapeHtml(id)}">${lastUpdate}</td>`;
+            
+            for (let field of EV_FIELDS) {
+                const value = evData[field];
+                const bgClass = getEVBackgroundClass(value);
+                html += `<td class="ev-cell ${bgClass}" data-id="${escapeHtml(id)}" data-field="${field}">${formatEV(value)}</td>`;
+            }
+            
+            html += '</tr>';
+        }
+        
+        tbody.innerHTML = html;
+        updateDataCount();
+    }
+
+    function escapeHtml(str) {
+        return String(str).replace(/[&<>]/g, function(m) {
+            if (m === '&') return '&amp;';
+            if (m === '<') return '&lt;';
+            if (m === '>') return '&gt;';
+            return m;
+        });
+    }
+
+    function parseAndUpdate(rawData) {
+        console.log('解析数据:', rawData);
+        
+        let newDataStore = JSON.parse(JSON.stringify(dataStore));
+        const timeStr = getCurrentDateTime();
+        
+        if (rawData.id && (rawData.cards || rawData.ev || rawData.player_cards || rawData.banker_cards)) {
+            if (!newDataStore[rawData.id]) {
+                newDataStore[rawData.id] = { cards: {}, ev: {}, player_cards: [], banker_cards: [] };
+            }
+            if (rawData.cards) newDataStore[rawData.id].cards = rawData.cards;
+            if (rawData.ev) newDataStore[rawData.id].ev = rawData.ev;
+            if (rawData.player_cards) newDataStore[rawData.id].player_cards = rawData.player_cards;
+            if (rawData.banker_cards) newDataStore[rawData.id].banker_cards = rawData.banker_cards;
+            newDataStore[rawData.id].last_update = timeStr;
+            updateDataIncremental(newDataStore);
+            return;
+        }
+        
+        if (typeof rawData === 'object') {
+            let hasUpdate = false;
+            for (let key in rawData) {
+                if (rawData[key] && (rawData[key].cards || rawData[key].ev || rawData[key].player_cards || rawData[key].banker_cards)) {
+                    newDataStore[key] = {
+                        cards: rawData[key].cards || {},
+                        ev: rawData[key].ev || {},
+                        player_cards: rawData[key].player_cards || [],
+                        banker_cards: rawData[key].banker_cards || []
+                    };
+                    newDataStore[key].last_update = timeStr;
+                    hasUpdate = true;
+                }
+            }
+            if (hasUpdate) {
+                updateDataIncremental(newDataStore);
+            }
+            return;
+        }
+        
+        const hasEvFields = EV_FIELDS.some(field => rawData[field] !== undefined);
+        if (hasEvFields) {
+            newDataStore['default'] = {
+                cards: {},
+                ev: rawData,
+                player_cards: [],
+                banker_cards: []
+            };
+            newDataStore['default'].last_update = timeStr;
+            updateDataIncremental(newDataStore);
+            return;
+        }
+    }
+
+    function clearReconnectTimer() {
+        if (reconnectTimer) {
+            clearTimeout(reconnectTimer);
+            reconnectTimer = null;
+        }
+    }
+
+    function resetReconnectAttempts() {
+        reconnectAttempts = 0;
+    }
+
+    function scheduleReconnect() {
+        if (reconnectTimer) return;
+        
+        if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+            console.log('已达到最大重连次数，停止重连');
+            updateStatusUI('failed');
+            return;
+        }
+        
+        const delay = BASE_RECONNECT_DELAY * Math.pow(1.5, reconnectAttempts);
+        console.log(`将在 ${delay/1000} 秒后进行第 ${reconnectAttempts + 1} 次重连`);
+        
+        const statusText = document.getElementById('statusText');
+        statusText.innerHTML = `🟡 重连中(${reconnectAttempts + 1}/${MAX_RECONNECT_ATTEMPTS})...`;
+        
+        reconnectTimer = setTimeout(() => {
+            reconnectTimer = null;
+            reconnectAttempts++;
+            console.log(`尝试第 ${reconnectAttempts} 次重连...`);
+            connectMQTT();
+        }, delay);
+    }
+
+    function updateStatusUI(status) {
+        const statusDiv = document.getElementById('mqttStatus');
+        const statusText = document.getElementById('statusText');
+        
+        statusDiv.classList.remove('status-connected', 'status-disconnected', 'status-failed', 'status-connecting');
+        
+        if (status === 'connected') {
+            statusDiv.classList.add('status-connected');
+            statusText.innerHTML = '🟢 已连接';
+            wasConnected = true;
+        } else if (status === 'connecting') {
+            statusDiv.classList.add('status-connecting');
+            statusText.innerHTML = '🟡 连接中...';
+        } else if (status === 'failed') {
+            statusDiv.classList.add('status-failed');
+            statusText.innerHTML = '🔴 连接失败';
+            wasConnected = false;
+        } else if (status === 'disconnected') {
+            statusDiv.classList.add('status-disconnected');
+            if (wasConnected) {
+                statusText.innerHTML = '🔴 连接断开，正在重连...';
+            } else {
+                statusText.innerHTML = '🔴 连接失败';
+            }
+        }
+    }
+
+    function connectMQTT() {
+        clearReconnectTimer();
+        
+        if (mqttClient) {
+            try {
+                mqttClient.end(true);
+            } catch(e) {}
+            mqttClient = null;
+        }
+        
+        updateStatusUI('connecting');
+        
+        const options = {
+            username: MQTT_USERNAME,
+            password: MQTT_PASSWORD,
+            clean: true,
+            reconnectPeriod: 0,
+            connectTimeout: 10000,
+            keepalive: 60
+        };
+        
+        try {
+            mqttClient = mqtt.connect(MQTT_HOST, options);
+            
+            mqttClient.on('connect', () => {
+                console.log('MQTT连接成功');
+                updateStatusUI('connected');
+                resetReconnectAttempts();
+                mqttClient.subscribe(MQTT_TOPIC, (err) => {
+                    if (!err) {
+                        console.log(`订阅主题: ${MQTT_TOPIC}`);
+                    } else {
+                        console.error('订阅失败:', err);
+                    }
+                });
+            });
+            
+            mqttClient.on('message', (receivedTopic, message) => {
+                try {
+                    const data = JSON.parse(message.toString());
+                    console.log('收到MQTT消息:', data);
+                    parseAndUpdate(data);
+                } catch (e) {
+                    console.error('解析失败:', e);
+                }
+            });
+            
+            mqttClient.on('error', (err) => {
+                console.error('MQTT错误:', err);
+                if (!wasConnected) {
+                    updateStatusUI('failed');
+                } else {
+                    updateStatusUI('disconnected');
+                }
+                scheduleReconnect();
+            });
+            
+            mqttClient.on('close', () => {
+                console.log('MQTT连接关闭');
+                if (wasConnected) {
+                    updateStatusUI('disconnected');
+                } else {
+                    updateStatusUI('failed');
+                }
+                scheduleReconnect();
+            });
+            
+            mqttClient.on('offline', () => {
+                console.log('MQTT离线');
+                if (wasConnected) {
+                    updateStatusUI('disconnected');
+                } else {
+                    updateStatusUI('failed');
+                }
+                scheduleReconnect();
+            });
+            
+        } catch (err) {
+            console.error('MQTT连接失败:', err);
+            updateStatusUI('failed');
+            scheduleReconnect();
+        }
+    }
+
+    function reconnect() {
+        console.log('手动重连...');
+        resetReconnectAttempts();
+        clearReconnectTimer();
+        wasConnected = false;
+        connectMQTT();
+    }
+
+    renderHeader();
+    connectMQTT();
+    
+    window.addEventListener('beforeunload', function() {
+        if (mqttClient) {
+            mqttClient.end(true);
+        }
+        clearReconnectTimer();
+    });
+    
+    document.getElementById('reconnectBtn').addEventListener('click', reconnect);
+</script>
+</body>
+</html>
