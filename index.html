@@ -76,11 +76,13 @@
             left: 0;
             font-size: 12px;
         }
+        /* 正数：深绿色 */
         .ev-positive-bg {
-            background-color: #e8f5e9 !important;
+            background-color: #a5d6a7 !important;
         }
+        /* 负数：深红色 */
         .ev-negative-bg {
-            background-color: #ffebee !important;
+            background-color: #ef9a9a !important;
         }
         .ev-neutral-bg {
             background-color: #ffffff !important;
@@ -172,8 +174,13 @@
             font-size: 11px;
             white-space: nowrap;
         }
+        /* 闪烁中的橙色 */
         .flash-active {
             background-color: #ffaa00 !important;
+        }
+        /* 只有牌值单元格保留橙色底色 */
+        .card-cell.retained-orange {
+            background-color: #ffb74d !important;
         }
     </style>
 </head>
@@ -181,7 +188,7 @@
 <div class="container">
     <div class="header">
         <h2>🃟 百家乐EV追踪器</h2>
-        <p>8副牌 | 实时接收MQTT数据 | 主题: SA_Gaming_EV | 点数: 0-9 | 变化单元格闪烁橙色5次 | 自动重连</p>
+        <p>8副牌 | 实时接收MQTT数据 | 主题: SA_Gaming_EV | 点数: 1-9-0 | <strong style="color:#ffb74d;">只有变化的牌值单元格闪烁并保留橙色底色</strong> | 每行独立 | 自动重连</p>
     </div>
 
     <div class="top-bar">
@@ -199,23 +206,25 @@
         <table class="card-table" id="cardTable">
             <thead id="tableHeader"></thead>
             <tbody id="tableBody">
-                <tr class="empty-row"><td colspan="50">暂无数据，等待MQTT消息......</td></tr>
+                <tr class="empty-row"><td colspan="50">暂无数据，等待MQTT消息...</td></tr>
             </tbody>
         </table>
     </div>
     <div class="footer-note">
-        ※ EV正数浅绿背景，EV负数浅红背景 | 数值变化时单元格背景会闪烁橙色5次 | 已出/剩余 = 总已出 / 剩余牌数（8副牌共416张）
+        ※ EV正数浅绿背景，EV负数浅红背景 | <strong>只有1-9-0牌值单元格变化时闪烁并保留橙色底色，其他列不保留底色</strong><br>
+        每行独立更新，互不影响 | 牌面顺序：1-9-0 | 已出/剩余 = 总已出 / 剩余牌数（8副牌共416张）
     </div>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/5.0.0/mqtt.min.js"></script>
 <script>
-    const MQTT_HOST = "ws://127.0.0.1:8882/mqtt";
+    const MQTT_HOST = "ws://mqtt.lylcode.cn:8882/mqtt";
     const MQTT_TOPIC = "SA_Gaming_EV";
     const MQTT_USERNAME = "MQTT@@##admin";
     const MQTT_PASSWORD = "MQTT@@##admin";
 
-    const ALL_RANKS = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'];
+    // 牌值顺序：先1-9，最后0
+    const ALL_RANKS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'];
     const TOTAL_CARDS = 416;
 
     const EV_FIELDS = [
@@ -242,7 +251,6 @@
     const MAX_RECONNECT_ATTEMPTS = 10;
     const BASE_RECONNECT_DELAY = 3000;
 
-    // 获取当前时间，格式: YYYY-MM-DD HH:MM:SS
     function getCurrentDateTime() {
         const now = new Date();
         const year = now.getFullYear();
@@ -284,15 +292,31 @@
         document.getElementById('dataCount').innerHTML = `📊 已加载 ${count} 条数据 | 最后刷新: ${now}`;
     }
 
-    function flashElement(element) {
+    // 移除空状态行
+    function removeEmptyRow() {
+        const emptyRow = document.querySelector('.empty-row');
+        if (emptyRow) {
+            emptyRow.remove();
+        }
+    }
+
+    // 牌值单元格闪烁并保留橙色底色
+    function flashCardCell(element) {
         if (!element) return;
+        
+        if (element._flashTimer) clearTimeout(element._flashTimer);
+        
+        element.classList.remove('flash-active', 'retained-orange');
         
         let flashCount = 0;
         const maxFlashes = 10;
         
         function doFlash() {
             if (!element || flashCount >= maxFlashes) {
-                if (element) element.classList.remove('flash-active');
+                if (element) {
+                    element.classList.remove('flash-active');
+                    element.classList.add('retained-orange');
+                }
                 return;
             }
             
@@ -303,10 +327,110 @@
             }
             
             flashCount++;
-            setTimeout(doFlash, 150);
+            element._flashTimer = setTimeout(doFlash, 150);
         }
         
         doFlash();
+    }
+
+    // 其他单元格只闪烁，不保留底色
+    function flashTemp(element) {
+        if (!element) return;
+        
+        if (element._flashTimer) clearTimeout(element._flashTimer);
+        
+        element.classList.remove('flash-active');
+        
+        let flashCount = 0;
+        const maxFlashes = 10;
+        
+        function doFlash() {
+            if (!element || flashCount >= maxFlashes) {
+                if (element) {
+                    element.classList.remove('flash-active');
+                }
+                return;
+            }
+            
+            if (flashCount % 2 === 0) {
+                element.classList.add('flash-active');
+            } else {
+                element.classList.remove('flash-active');
+            }
+            
+            flashCount++;
+            element._flashTimer = setTimeout(doFlash, 150);
+        }
+        
+        doFlash();
+    }
+
+    // 清除指定行所有牌值单元格的保留橙色
+    function clearRowRetainedOrange(id) {
+        const escapedId = escapeHtml(id);
+        for (let rank of ALL_RANKS) {
+            const cell = document.querySelector(`.card-cell[data-id="${escapedId}"][data-rank="${rank}"]`);
+            if (cell) cell.classList.remove('retained-orange', 'flash-active');
+        }
+    }
+
+    // 添加新行
+    function addNewRow(id, item) {
+        // 移除空状态行
+        removeEmptyRow();
+        
+        const tbody = document.getElementById('tableBody');
+        const cardData = item?.cards || {};
+        const evData = item?.ev || {};
+        const playerCards = item?.player_cards || [];
+        const bankerCards = item?.banker_cards || [];
+        const lastUpdate = item?.last_update || getCurrentDateTime();
+        const escapedId = escapeHtml(id);
+        
+        let totalDrawn = 0;
+        for (let rank of ALL_RANKS) totalDrawn += (cardData[rank] || 0);
+        const totalRemain = TOTAL_CARDS - totalDrawn;
+        const remainClass = totalRemain <= 20 ? 'remain-low' : '';
+        
+        let html = `<tr data-row-id="${escapedId}">`;
+        html += `<td class="id-cell">${escapeHtml(id)}</td>`;
+        for (let rank of ALL_RANKS) {
+            const drawn = cardData[rank] || 0;
+            html += `<td class="card-cell" data-id="${escapedId}" data-rank="${rank}">${drawn}</td>`;
+        }
+        html += `<td class="player-cards hand-cards" data-id="${escapedId}">${formatHandCards(playerCards)}</td>`;
+        html += `<td class="banker-cards hand-cards" data-id="${escapedId}">${formatHandCards(bankerCards)}</td>`;
+        html += `<td class="total-cell" data-id="${escapedId}">${totalDrawn} / <span class="${remainClass}">${totalRemain}</span></td>`;
+        html += `<td class="update-time-cell update-time" data-id="${escapedId}">${lastUpdate}</td>`;
+        for (let field of EV_FIELDS) {
+            const value = evData[field];
+            const bgClass = getEVBackgroundClass(value);
+            html += `<td class="ev-cell ${bgClass}" data-id="${escapedId}" data-field="${field}">${formatEV(value)}</td>`;
+        }
+        html += `</tr>`;
+        
+        tbody.insertAdjacentHTML('beforeend', html);
+        
+        // 新增行：所有牌值单元格闪烁并保留橙色
+        setTimeout(() => {
+            for (let rank of ALL_RANKS) {
+                const cell = document.querySelector(`.card-cell[data-id="${escapedId}"][data-rank="${rank}"]`);
+                if (cell) flashCardCell(cell);
+            }
+            // 其他单元格只闪烁不保留
+            const playerCell = document.querySelector(`.player-cards[data-id="${escapedId}"]`);
+            if (playerCell) flashTemp(playerCell);
+            const bankerCell = document.querySelector(`.banker-cards[data-id="${escapedId}"]`);
+            if (bankerCell) flashTemp(bankerCell);
+            const totalCell = document.querySelector(`.total-cell[data-id="${escapedId}"]`);
+            if (totalCell) flashTemp(totalCell);
+            const timeCell = document.querySelector(`.update-time-cell[data-id="${escapedId}"]`);
+            if (timeCell) flashTemp(timeCell);
+            for (let field of EV_FIELDS) {
+                const evCell = document.querySelector(`.ev-cell[data-id="${escapedId}"][data-field="${field}"]`);
+                if (evCell) flashTemp(evCell);
+            }
+        }, 50);
     }
 
     function renderHeader() {
@@ -330,25 +454,6 @@
         thead.innerHTML = html;
     }
 
-    function flashAllCellsForId(id) {
-        for (let rank of ALL_RANKS) {
-            const cell = document.querySelector(`.card-cell[data-id="${escapeHtml(id)}"][data-rank="${rank}"]`);
-            if (cell) flashElement(cell);
-        }
-        const playerCardsCell = document.querySelector(`.player-cards[data-id="${escapeHtml(id)}"]`);
-        if (playerCardsCell) flashElement(playerCardsCell);
-        const bankerCardsCell = document.querySelector(`.banker-cards[data-id="${escapeHtml(id)}"]`);
-        if (bankerCardsCell) flashElement(bankerCardsCell);
-        const totalCell = document.querySelector(`.total-cell[data-id="${escapeHtml(id)}"]`);
-        if (totalCell) flashElement(totalCell);
-        const updateTimeCell = document.querySelector(`.update-time-cell[data-id="${escapeHtml(id)}"]`);
-        if (updateTimeCell) flashElement(updateTimeCell);
-        for (let field of EV_FIELDS) {
-            const cell = document.querySelector(`.ev-cell[data-id="${escapeHtml(id)}"][data-field="${field}"]`);
-            if (cell) flashElement(cell);
-        }
-    }
-
     function updateDataIncremental(newData) {
         const oldData = JSON.parse(JSON.stringify(previousDataStore));
         const allIds = new Set([...Object.keys(oldData), ...Object.keys(newData)]);
@@ -357,20 +462,19 @@
             const oldItem = oldData[id];
             const newItem = newData[id];
             
+            // 新增ID
             if (!oldItem && newItem) {
-                dataStore = JSON.parse(JSON.stringify(newData));
-                previousDataStore = JSON.parse(JSON.stringify(newData));
-                renderFullTable();
-                setTimeout(() => {
-                    flashAllCellsForId(id);
-                }, 50);
+                dataStore[id] = JSON.parse(JSON.stringify(newItem));
+                dataStore[id].last_update = getCurrentDateTime();
+                addNewRow(id, dataStore[id]);
                 continue;
             }
             
+            // 删除ID
             if (oldItem && !newItem) {
-                dataStore = JSON.parse(JSON.stringify(newData));
-                previousDataStore = JSON.parse(JSON.stringify(newData));
-                renderFullTable();
+                delete dataStore[id];
+                const row = document.querySelector(`tr[data-row-id="${escapeHtml(id)}"]`);
+                if (row) row.remove();
                 continue;
             }
             
@@ -380,93 +484,144 @@
             const newCards = newItem.cards || {};
             const oldEv = oldItem.ev || {};
             const newEv = newItem.ev || {};
+            const oldPlayer = oldItem.player_cards || [];
+            const newPlayer = newItem.player_cards || [];
+            const oldBanker = oldItem.banker_cards || [];
+            const newBanker = newItem.banker_cards || [];
             
-            let cardChanged = false;
-            let dataChanged = false;
-            
+            // 检查牌值是否有任何变化
+            let cardsHasChange = false;
             for (let rank of ALL_RANKS) {
-                const oldVal = oldCards[rank] || 0;
-                const newVal = newCards[rank] || 0;
+                if ((oldCards[rank] || 0) !== (newCards[rank] || 0)) {
+                    cardsHasChange = true;
+                    break;
+                }
+            }
+            
+            // 检查其他数据是否有变化（用于决定是否更新时间）
+            let otherHasChange = false;
+            if (JSON.stringify(oldPlayer) !== JSON.stringify(newPlayer)) otherHasChange = true;
+            if (JSON.stringify(oldBanker) !== JSON.stringify(newBanker)) otherHasChange = true;
+            for (let field of EV_FIELDS) {
+                if (oldEv[field] !== newEv[field]) {
+                    otherHasChange = true;
+                    break;
+                }
+            }
+            
+            const hasChange = cardsHasChange || otherHasChange;
+            
+            if (hasChange) {
+                const escapedId = escapeHtml(id);
                 
-                if (oldVal !== newVal) {
-                    const cell = document.querySelector(`.card-cell[data-id="${escapeHtml(id)}"][data-rank="${rank}"]`);
-                    if (cell) {
-                        cell.textContent = newVal;
-                        flashElement(cell);
-                        cardChanged = true;
-                        dataChanged = true;
+                // 只有当牌值有变化时，才清除牌值单元格的旧底色并重新闪烁
+                if (cardsHasChange) {
+                    // 清除该行所有牌值单元格的保留橙色
+                    for (let rank of ALL_RANKS) {
+                        const cell = document.querySelector(`.card-cell[data-id="${escapedId}"][data-rank="${rank}"]`);
+                        if (cell) cell.classList.remove('retained-orange', 'flash-active');
+                    }
+                    
+                    // 处理牌值单元格
+                    for (let rank of ALL_RANKS) {
+                        const oldVal = oldCards[rank] || 0;
+                        const newVal = newCards[rank] || 0;
+                        
+                        if (oldVal !== newVal) {
+                            const cell = document.querySelector(`.card-cell[data-id="${escapedId}"][data-rank="${rank}"]`);
+                            if (cell) {
+                                cell.textContent = newVal;
+                                flashCardCell(cell);
+                            }
+                        }
                     }
                 }
-            }
-            
-            const oldPlayerCards = oldItem.player_cards || [];
-            const newPlayerCards = newItem.player_cards || [];
-            const playerCardsStr = formatHandCards(newPlayerCards);
-            const playerCardsCell = document.querySelector(`.player-cards[data-id="${escapeHtml(id)}"]`);
-            if (playerCardsCell && playerCardsCell.textContent !== playerCardsStr) {
-                playerCardsCell.textContent = playerCardsStr;
-                flashElement(playerCardsCell);
-                cardChanged = true;
-                dataChanged = true;
-            }
-            
-            const oldBankerCards = oldItem.banker_cards || [];
-            const newBankerCards = newItem.banker_cards || [];
-            const bankerCardsStr = formatHandCards(newBankerCards);
-            const bankerCardsCell = document.querySelector(`.banker-cards[data-id="${escapeHtml(id)}"]`);
-            if (bankerCardsCell && bankerCardsCell.textContent !== bankerCardsStr) {
-                bankerCardsCell.textContent = bankerCardsStr;
-                flashElement(bankerCardsCell);
-                cardChanged = true;
-                dataChanged = true;
-            }
-            
-            let totalDrawn = 0;
-            for (let rank of ALL_RANKS) {
-                totalDrawn += (newCards[rank] || 0);
-            }
-            const totalRemain = TOTAL_CARDS - totalDrawn;
-            const remainClass = totalRemain <= 20 ? 'remain-low' : '';
-            
-            const totalCell = document.querySelector(`.total-cell[data-id="${escapeHtml(id)}"]`);
-            if (totalCell) {
-                const newTotalHtml = `${totalDrawn} / <span class="${remainClass}">${totalRemain}</span>`;
-                if (totalCell.innerHTML !== newTotalHtml) {
-                    totalCell.innerHTML = newTotalHtml;
-                    if (cardChanged) flashElement(totalCell);
-                    dataChanged = true;
+                
+                // 处理闲家手牌（只闪烁，不保留）
+                const playerCardsStr = formatHandCards(newPlayer);
+                const playerCardsCell = document.querySelector(`.player-cards[data-id="${escapedId}"]`);
+                const oldPlayerStr = formatHandCards(oldPlayer);
+                if (oldPlayerStr !== playerCardsStr) {
+                    if (playerCardsCell) {
+                        playerCardsCell.textContent = playerCardsStr;
+                        flashTemp(playerCardsCell);
+                    }
                 }
-            }
-            
-            // 更新最后更新时间
-            if (dataChanged) {
-                const updateTimeCell = document.querySelector(`.update-time-cell[data-id="${escapeHtml(id)}"]`);
+                
+                // 处理庄家手牌（只闪烁，不保留）
+                const bankerCardsStr = formatHandCards(newBanker);
+                const bankerCardsCell = document.querySelector(`.banker-cards[data-id="${escapedId}"]`);
+                const oldBankerStr = formatHandCards(oldBanker);
+                if (oldBankerStr !== bankerCardsStr) {
+                    if (bankerCardsCell) {
+                        bankerCardsCell.textContent = bankerCardsStr;
+                        flashTemp(bankerCardsCell);
+                    }
+                }
+                
+                // 计算并更新总计（只闪烁，不保留）
+                let totalDrawn = 0;
+                for (let rank of ALL_RANKS) totalDrawn += (newCards[rank] || 0);
+                const totalRemain = TOTAL_CARDS - totalDrawn;
+                const remainClass = totalRemain <= 20 ? 'remain-low' : '';
+                const newTotalHtml = `${totalDrawn} / <span class="${remainClass}">${totalRemain}</span>`;
+                const totalCell = document.querySelector(`.total-cell[data-id="${escapedId}"]`);
+                
+                let oldTotalDrawn = 0;
+                for (let rank of ALL_RANKS) oldTotalDrawn += (oldCards[rank] || 0);
+                const oldTotalHtml = `${oldTotalDrawn} / ${TOTAL_CARDS - oldTotalDrawn}`;
+                
+                if (oldTotalHtml !== newTotalHtml) {
+                    if (totalCell) {
+                        totalCell.innerHTML = newTotalHtml;
+                        flashTemp(totalCell);
+                    }
+                }
+                
+                // 处理EV字段（只闪烁，不保留）
+                for (let field of EV_FIELDS) {
+                    const oldVal = oldEv[field];
+                    const newVal = newEv[field];
+                    
+                    if (oldVal !== newVal) {
+                        const cell = document.querySelector(`.ev-cell[data-id="${escapedId}"][data-field="${field}"]`);
+                        if (cell) {
+                            cell.textContent = formatEV(newVal);
+                            const bgClass = getEVBackgroundClass(newVal);
+                            cell.className = `ev-cell ${bgClass}`;
+                            flashTemp(cell);
+                        }
+                    }
+                }
+                
+                // 更新最后更新时间（只闪烁，不保留）
+                const updateTimeCell = document.querySelector(`.update-time-cell[data-id="${escapedId}"]`);
                 if (updateTimeCell) {
                     const timeStr = getCurrentDateTime();
                     updateTimeCell.textContent = timeStr;
-                    flashElement(updateTimeCell);
+                    flashTemp(updateTimeCell);
                 }
-            }
-            
-            for (let field of EV_FIELDS) {
-                const oldVal = oldEv[field];
-                const newVal = newEv[field];
                 
-                if (oldVal !== newVal) {
-                    const cell = document.querySelector(`.ev-cell[data-id="${escapeHtml(id)}"][data-field="${field}"]`);
-                    if (cell) {
-                        cell.textContent = formatEV(newVal);
-                        const bgClass = getEVBackgroundClass(newVal);
-                        cell.className = `ev-cell ${bgClass}`;
-                        flashElement(cell);
-                        dataChanged = true;
-                    }
+                // 更新数据存储
+                if (dataStore[id]) {
+                    dataStore[id].cards = JSON.parse(JSON.stringify(newCards));
+                    dataStore[id].ev = JSON.parse(JSON.stringify(newEv));
+                    dataStore[id].player_cards = [...newPlayer];
+                    dataStore[id].banker_cards = [...newBanker];
+                    dataStore[id].last_update = getCurrentDateTime();
+                }
+            } else {
+                // 该行没有变化，只更新数据存储
+                if (dataStore[id]) {
+                    dataStore[id].cards = JSON.parse(JSON.stringify(newCards));
+                    dataStore[id].ev = JSON.parse(JSON.stringify(newEv));
+                    dataStore[id].player_cards = [...newPlayer];
+                    dataStore[id].banker_cards = [...newBanker];
                 }
             }
         }
         
-        dataStore = JSON.parse(JSON.stringify(newData));
-        previousDataStore = JSON.parse(JSON.stringify(newData));
+        previousDataStore = JSON.parse(JSON.stringify(dataStore));
         updateDataCount();
     }
 
@@ -480,6 +635,9 @@
             return;
         }
         
+        // 移除空状态行
+        removeEmptyRow();
+        
         let html = '';
         for (let id of ids) {
             const item = dataStore[id];
@@ -488,6 +646,7 @@
             const playerCards = item?.player_cards || [];
             const bankerCards = item?.banker_cards || [];
             const lastUpdate = item?.last_update || '--';
+            const escapedId = escapeHtml(id);
             
             let totalDrawn = 0;
             for (let rank of ALL_RANKS) {
@@ -496,27 +655,22 @@
             const totalRemain = TOTAL_CARDS - totalDrawn;
             const remainClass = totalRemain <= 20 ? 'remain-low' : '';
             
-            html += '<tr>';
+            html += `<tr data-row-id="${escapedId}">`;
             html += `<td class="id-cell">${escapeHtml(id)}</td>`;
-            
             for (let rank of ALL_RANKS) {
                 const drawn = cardData[rank] || 0;
-                html += `<td class="card-cell" data-id="${escapeHtml(id)}" data-rank="${rank}">${drawn}</td>`;
+                html += `<td class="card-cell" data-id="${escapedId}" data-rank="${rank}">${drawn}</td>`;
             }
-            
-            html += `<td class="player-cards hand-cards" data-id="${escapeHtml(id)}">${formatHandCards(playerCards)}</td>`;
-            html += `<td class="banker-cards hand-cards" data-id="${escapeHtml(id)}">${formatHandCards(bankerCards)}</td>`;
-            
-            html += `<td class="total-cell" data-id="${escapeHtml(id)}">${totalDrawn} / <span class="${remainClass}">${totalRemain}</span></td>`;
-            html += `<td class="update-time-cell update-time" data-id="${escapeHtml(id)}">${lastUpdate}</td>`;
-            
+            html += `<td class="player-cards hand-cards" data-id="${escapedId}">${formatHandCards(playerCards)}</td>`;
+            html += `<td class="banker-cards hand-cards" data-id="${escapedId}">${formatHandCards(bankerCards)}</td>`;
+            html += `<td class="total-cell" data-id="${escapedId}">${totalDrawn} / <span class="${remainClass}">${totalRemain}</span></td>`;
+            html += `<td class="update-time-cell update-time" data-id="${escapedId}">${lastUpdate}</td>`;
             for (let field of EV_FIELDS) {
                 const value = evData[field];
                 const bgClass = getEVBackgroundClass(value);
-                html += `<td class="ev-cell ${bgClass}" data-id="${escapeHtml(id)}" data-field="${field}">${formatEV(value)}</td>`;
+                html += `<td class="ev-cell ${bgClass}" data-id="${escapedId}" data-field="${field}">${formatEV(value)}</td>`;
             }
-            
-            html += '</tr>';
+            html += `</tr>`;
         }
         
         tbody.innerHTML = html;
